@@ -21,7 +21,7 @@
 // @run-at        document-idle
 // ==/UserScript==
 
-document.addEventListener("click", function(event) {
+document.addEventListener("click", function (event) {
     const trainerCard = event.target.closest(".trainer-card");
 
     if (trainerCard !== null && trainerCard.dataset !== null) {
@@ -31,7 +31,7 @@ document.addEventListener("click", function(event) {
         const missingNoToKeep = saveData.party.caughtPokemon.find(pokemon => pokemon.id === 0);
 
         if (missingNoToKeep) {
-            setTimeout(function() {
+            setTimeout(function () {
                 const hasMissingNoBeenDeleted = App.game.party.getPokemonByName('MissingNo.') === undefined ? true : false;
 
                 if (hasMissingNoBeenDeleted) {
@@ -39,6 +39,7 @@ document.addEventListener("click", function(event) {
                     App.game.party.gainPokemonById(0, isShiny);
                     const newMissingNo = App.game.party.getPokemonByName('MissingNo.');
                     createPartyPokemon(newMissingNo, missingNoToKeep);
+                    overrideHatcheryFunction(newMissingNo);
                 }
             }, 5000);
         }
@@ -73,26 +74,148 @@ function getVitamins(newMissingNo, vitaminsUsed) {
 }
 
 function getHeldItem(newMissingNo, heldItemName) {
-    const heldItem = new HeldItem(
-        heldItemName,
-        0,
-        GameConstants.Currency.money, {
+    if (heldItemName !== undefined) {
+        const heldItem = new HeldItem(
+            heldItemName,
+            0,
+            GameConstants.Currency.money, {
             maxAmount: 1
         },
-        '',
-        '',
-        GameConstants.Region.kanto,
-        (pokemon) => true
-    );
+            '',
+            '',
+            GameConstants.Region.kanto,
+            (pokemon) => true
+        );
 
-    if (heldItem.name !== undefined) {
-        const heldItemQuantity = player.itemList[heldItem.name]();
-        player.itemList[heldItem.name](heldItemQuantity + 1);
-        newMissingNo.giveHeldItem(heldItem);
+        if (heldItem.name !== undefined) {
+            const heldItemQuantity = player.itemList[heldItem.name]();
+            player.itemList[heldItem.name](heldItemQuantity + 1);
+            newMissingNo.giveHeldItem(heldItem);
+        }
     }
 }
 
-function initkeepMissingNo() {}
+function initkeepMissingNo() {
+    PartyController.getVitaminFilteredList = overridePartyControllerMethods(PartyController.getVitaminFilteredList.toString());
+    PartyController.getHeldItemFilteredList = overridePartyControllerMethods(PartyController.getHeldItemFilteredList.toString());
+
+    if (App.game.party.caughtPokemon[0]) {
+        overrideHatcheryFunction(App.game.party.caughtPokemon[0]);
+    }
+}
+
+function overridePartyControllerMethods(functionToOverride) {
+    const patchedFunction = functionToOverride.replace(/if\s*\(\s*pokemon\.id\s*<=\s*0\s*\)\s*\{\s*return\s*false;\s*\}/, '');
+    const braceStart = patchedFunction.indexOf('{');
+    const braceEnd = patchedFunction.lastIndexOf('}');
+    let body = patchedFunction.slice(braceStart + 1, braceEnd).split('\n');
+
+    return (new Function(body.join('\n')));
+}
+
+function overrideHatcheryFunction(missingNo) {
+    delete missingNo.matchesHatcheryFilters;
+
+    missingNo.matchesHatcheryFilters = ko.pureComputed(function () {
+        // Check if search matches englishName or displayName
+        const nameFilterSetting = Settings.getSetting('breedingNameFilter');
+        if (nameFilterSetting.observableValue() != '') {
+            const nameFilter = nameFilterSetting.regex();
+            const displayName = PokemonHelper.displayName(this.name)();
+            const partyName = this.displayName;
+            if (!nameFilter.test(displayName) && !nameFilter.test(this.name) && !(partyName != undefined && nameFilter.test(partyName))) {
+                return false;
+            }
+        }
+
+        // Check if search matches species number
+        const idFilter = Settings.getSetting('breedingIDFilter').observableValue();
+        if (idFilter > -1 && idFilter != Math.floor(this.id)) {
+            return false;
+        }
+
+        // Check based on categories
+        const categoryFilter = Settings.getSetting('breedingCategoryFilter').observableValue();
+        // Categorized only
+        if (categoryFilter == -2 && this.isUncategorized()) {
+            return false;
+        }
+        // Selected category
+        if (categoryFilter >= 0 && !this.category.includes(categoryFilter)) {
+            return false;
+        }
+
+        // Check based on shiny status
+        const shinyFilter = Settings.getSetting('breedingShinyFilter').observableValue();
+        if (shinyFilter >= 0 && +this.shiny !== shinyFilter) {
+            return false;
+        }
+
+        // Check based on native region
+        const unlockedRegionsMask = (2 << player.highestRegion()) - 1;
+        const regionFilterMask = Settings.getSetting('breedingRegionFilter').observableValue() & unlockedRegionsMask;
+        if (regionFilterMask !== unlockedRegionsMask) {
+            const nativeRegion = PokemonHelper.calcNativeRegion(this.name);
+            // With the region filter active, regionless pokemon should be shown only if no regions are selected
+            const nativeRegionInFilter = nativeRegion !== GameConstants.Region.none ?
+                (1 << nativeRegion) & regionFilterMask :
+                regionFilterMask === 0;
+            if (!nativeRegionInFilter) {
+                return false;
+            }
+        }
+
+        // Check based on Pokerus status
+        const pokerusFilter = Settings.getSetting('breedingPokerusFilter').observableValue();
+        if (pokerusFilter > -1 && this.pokerus !== pokerusFilter) {
+            return false;
+        }
+
+        const uniqueTransformationFilter = Settings.getSetting('breedingUniqueTransformationFilter').observableValue();
+        const pokemon = PokemonHelper.getPokemonById(this.id);
+        // Only Base Pokémon with Mega available
+        if (uniqueTransformationFilter == 'mega-available' && !PokemonHelper.hasMegaEvolution(pokemon.name)) {
+            return false;
+        }
+        // Only Base Pokémon without Mega Evolution
+        if (uniqueTransformationFilter == 'mega-unobtained' && !PokemonHelper.hasUncaughtMegaEvolution(pokemon.name)) {
+            return false;
+        }
+        // Only Mega Pokémon
+        if (uniqueTransformationFilter == 'mega-evolution' && !PokemonHelper.isMegaEvolution(pokemon.name)) {
+            return false;
+        }
+
+        // Check to exclude alternate forms
+        const hideAltFilter = Settings.getSetting('breedingHideAltFilter').observableValue();
+        if (hideAltFilter && !Number.isInteger(pokemon.id)) {
+            // Don't exclude alt forms native to a different region, as they're considered a main form for that region's progression
+            const nativeRegion = PokemonHelper.calcNativeRegion(this.name);
+            const hasBaseFormInSameRegion = pokemonList.some((p) => Math.floor(p.id) == Math.floor(pokemon.id) && p.id < pokemon.id && PokemonHelper.calcNativeRegion(p.name) == nativeRegion);
+            if (hasBaseFormInSameRegion) {
+                return false;
+            }
+        }
+
+        // Check if either of the types match
+        const type1 = Settings.getSetting('breedingType1Filter').observableValue();
+        const type2 = Settings.getSetting('breedingType2Filter').observableValue();
+
+        if (type1 !== null || type2 !== null) {
+            const { type: types } = pokemonMap[this.name];
+            if ([type1, type2].includes(PokemonType.None)) {
+                const type = (type1 == PokemonType.None) ? type2 : type1;
+                if (!BreedingController.isPureType(this, type)) {
+                    return false;
+                }
+            } else if ((type1 !== null && !types.includes(type1)) || (type2 !== null && !types.includes(type2))) {
+                return false;
+            }
+        }
+
+        return true;
+    }, missingNo);
+}
 
 function loadSetting(key, defaultVal) {
     var val;
@@ -126,7 +249,7 @@ function loadEpheniaScript(scriptName, initFunction, priorityFunction) {
         var hasInitialized = false;
 
         // Initializes scripts once enough of the game has loaded
-        Preload.hideSplashScreen = function(...args) {
+        Preload.hideSplashScreen = function (...args) {
             var result = oldInit.apply(this, args);
             if (App.game && !hasInitialized) {
                 // Initialize all attached userscripts
