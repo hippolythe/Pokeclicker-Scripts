@@ -332,6 +332,8 @@ This script is only compatible with the desktop client. For detailed instruction
 This script lets you keep your MissingNo, which is automatically deleted when your pokeclicker save is updated.
 All the MissingNo's information (nickname, category, exp, etc.), the vitamins used and the object held are kept.
 
+The script also allows you to give yourself a MissingNo, from the Save / Enter Code menu you need to type missingNo in the Code entry then claim to unlock it.
+
 <hr>
 
 <a name="auto-quest-completer"></a>
