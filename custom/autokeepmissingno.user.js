@@ -46,6 +46,12 @@ document.addEventListener("click", function (event) {
     }
 });
 
+document.getElementById("redeemable-code-input").addEventListener('change', function() {
+    if (this.value.toLowerCase() === "missingno" || this.value.toLowerCase() === "missingno.") {
+           App.game.party.gainPokemonById(0, false);
+    }
+});
+
 function createPartyPokemon(newMissingNo, missingNoToKeep) {
     getVitamins(newMissingNo, missingNoToKeep[2]);
     getHeldItem(newMissingNo, missingNoToKeep[10]);
